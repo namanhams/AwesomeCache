@@ -12,9 +12,9 @@ import Foundation
  *  Represents the expiry of a cached object
  */
 public enum CacheExpiry {
-	case Never
-	case Seconds(NSTimeInterval)
-	case Date(NSDate)
+	case never
+	case seconds(TimeInterval)
+	case date(Foundation.Date)
 }
 
 /**
@@ -25,14 +25,14 @@ public enum CacheExpiry {
  *  Subclassing notes: This class fully supports subclassing. 
  *  The easiest way to implement a subclass is to override `objectForKey` and `setObject:forKey:expires:`, e.g. to modify values prior to reading/writing to the cache.
  */
-public class Cache<T: NSCoding> {
-	public let name: String
-	public let cacheDirectory: String
+open class Cache<T: NSCoding> {
+	open let name: String
+	open let cacheDirectory: String
 	
-    private let cache:NSCache?
-	private let fileManager = NSFileManager()
-	private let diskWriteQueue: dispatch_queue_t = dispatch_queue_create("com.aschuch.cache.diskWriteQueue", DISPATCH_QUEUE_SERIAL)
-	private let diskReadQueue: dispatch_queue_t = dispatch_queue_create("com.aschuch.cache.diskReadQueue", DISPATCH_QUEUE_SERIAL)
+    fileprivate let cache:NSCache<AnyObject, AnyObject>?
+	fileprivate let fileManager = FileManager()
+	fileprivate let diskWriteQueue: DispatchQueue = DispatchQueue(label: "com.aschuch.cache.diskWriteQueue", attributes: [])
+	fileprivate let diskReadQueue: DispatchQueue = DispatchQueue(label: "com.aschuch.cache.diskReadQueue", attributes: [])
 	
 	
 	// MARK: Initializers
@@ -61,14 +61,14 @@ public class Cache<T: NSCoding> {
 		if let d = directory {
 			cacheDirectory = d
 		} else {
-			let dir = NSSearchPathForDirectoriesInDomains(.CachesDirectory, .UserDomainMask, true).first
-			cacheDirectory = dir!.stringByAppendingFormat("/com.aschuch.cache/%@", name)
+			let dir = NSSearchPathForDirectoriesInDomains(.cachesDirectory, .userDomainMask, true).first
+			cacheDirectory = dir!.appendingFormat("/com.aschuch.cache/%@", name)
 		}
 		
 		// Create directory on disk
-		if !fileManager.fileExistsAtPath(cacheDirectory) {
+		if !fileManager.fileExists(atPath: cacheDirectory) {
 			do {
-				try fileManager.createDirectoryAtPath(cacheDirectory, withIntermediateDirectories: true, attributes: nil)
+				try fileManager.createDirectory(atPath: cacheDirectory, withIntermediateDirectories: true, attributes: nil)
 			} catch _ {
 			}
 		}
@@ -101,7 +101,7 @@ public class Cache<T: NSCoding> {
 	 *						If the error block is called, the object is not cached and the completion block is invoked with this error.
 	 *  @param completion	Called as soon as a cached object is available to use. The second parameter is true if the object was already cached.
 	 */
-	public func setObjectForKey(key: String, cacheBlock: ((T, CacheExpiry) -> (), (NSError?) -> ()) -> (), completion: (T?, Bool, NSError?) -> ()) {
+	open func setObjectForKey(_ key: String, cacheBlock: ((T, CacheExpiry) -> (), (NSError?) -> ()) -> (), completion: @escaping (T?, Bool, NSError?) -> ()) {
 		if let object = objectForKey(key) {
 			completion(object, true, nil)
 		} else {
@@ -128,18 +128,18 @@ public class Cache<T: NSCoding> {
 	 *  @param name		The name of the object that should be returned
 	 *  @return			The cached object for the given name, or nil
 	 */
-	public func objectForKey(key: String) -> T? {
+    open func objectForKey(_ key: String, removeIfExpired:Bool=true) -> T? {
 		var possibleObject: CacheObject?
 				
 		// Check if object exists in local cache
-		possibleObject = cache?.objectForKey(key) as? CacheObject
+		possibleObject = cache?.object(forKey: key as AnyObject) as? CacheObject
 		
 		if possibleObject == nil {
 			// Try to load object from disk (synchronously)
-			dispatch_sync(diskReadQueue) {
+			diskReadQueue.sync {
 				let path = self.pathForKey(key)
-				if self.fileManager.fileExistsAtPath(path) {
-					possibleObject = NSKeyedUnarchiver.unarchiveObjectWithFile(path) as? CacheObject
+				if self.fileManager.fileExists(atPath: path) {
+					possibleObject = NSKeyedUnarchiver.unarchiveObject(withFile: path) as? CacheObject
 				}
 			}
 		}
@@ -150,7 +150,9 @@ public class Cache<T: NSCoding> {
 			if !object.isExpired() {
 				return object.value as? T
 			} else {
-				removeObjectForKey(key)
+                if removeIfExpired {
+                    removeObjectForKey(key)
+                }
 			}
 		}
 		
@@ -166,8 +168,8 @@ public class Cache<T: NSCoding> {
 	 *  @param object	The object that should be cached
 	 *  @param forKey	A key that represents this object in the cache
 	 */
-	public func setObject(object: T, forKey key: String) {
-		self.setObject(object, forKey: key, expires: .Never)
+	open func setObject(_ object: T, forKey key: String) {
+		self.setObject(object, forKey: key, expires: .never)
 	}
 	
 	/**
@@ -177,15 +179,15 @@ public class Cache<T: NSCoding> {
 	 *  @param object	The object that should be cached
 	 *  @param forKey	A key that represents this object in the cache
 	 */
-	public func setObject(object: T, forKey key: String, expires: CacheExpiry) {
+	open func setObject(_ object: T, forKey key: String, expires: CacheExpiry) {
 		let expiryDate = expiryDateForCacheExpiry(expires)
 		let cacheObject = CacheObject(value: object, expiryDate: expiryDate)
 		
 		// Set object in local cache
-		cache?.setObject(cacheObject, forKey: key)
+		cache?.setObject(cacheObject, forKey: key as AnyObject)
 		
 		// Write object to disk (asyncronously)
-		dispatch_async(diskWriteQueue) {
+		diskWriteQueue.async {
 			let path = self.pathForKey(key)
 			NSKeyedArchiver.archiveRootObject(cacheObject, toFile: path)
 		}
@@ -199,13 +201,13 @@ public class Cache<T: NSCoding> {
 	 *  
 	 *  @param key	The key of the object that should be removed
 	 */
-	public func removeObjectForKey(key: String) {
-		cache?.removeObjectForKey(key)
+	open func removeObjectForKey(_ key: String) {
+		cache?.removeObject(forKey: key as AnyObject)
 		
-		dispatch_async(diskWriteQueue) {
+		diskWriteQueue.async {
 			let path = self.pathForKey(key)
 			do {
-				try self.fileManager.removeItemAtPath(path)
+				try self.fileManager.removeItem(atPath: path)
 			} catch _ {
 			}
 		}
@@ -216,24 +218,24 @@ public class Cache<T: NSCoding> {
 	 *
 	 *  @param completion	Called as soon as all cached objects are removed from disk.
 	 */
-	public func removeAllObjects(completion: (() -> Void)? = nil) {
+	open func removeAllObjects(_ completion: (() -> Void)? = nil) {
 		cache?.removeAllObjects()
 		
-		dispatch_async(diskWriteQueue) {
-			let paths = (try! self.fileManager.contentsOfDirectoryAtPath(self.cacheDirectory)) 
+		diskWriteQueue.async {
+			let paths = (try! self.fileManager.contentsOfDirectory(atPath: self.cacheDirectory)) 
             let keys = self.map(paths, { (obj) -> String in
-                return String(NSString(string:obj).stringByDeletingPathExtension)
+                return String(NSString(string:obj).deletingPathExtension)
             })
 			
 			for key in keys {
 				let path = self.pathForKey(key)
 				do {
-					try self.fileManager.removeItemAtPath(path)
+					try self.fileManager.removeItem(atPath: path)
 				} catch _ {
 				}
 			}
 
-			dispatch_async(dispatch_get_main_queue()) {
+			DispatchQueue.main.async {
 				completion?()
 			}
 		}
@@ -245,16 +247,16 @@ public class Cache<T: NSCoding> {
 	/**
 	 *  Removes all expired objects from the cache.
 	 */
-	public func removeExpiredObjects() {
-		dispatch_async(diskWriteQueue) {
-			let paths = (try! self.fileManager.contentsOfDirectoryAtPath(self.cacheDirectory))
+	open func removeExpiredObjects() {
+		diskWriteQueue.async {
+			let paths = (try! self.fileManager.contentsOfDirectory(atPath: self.cacheDirectory))
             let keys = self.map(paths, { (obj) -> String in
-                return String(NSString(string:obj).stringByDeletingPathExtension)
+                return String(NSString(string:obj).deletingPathExtension)
             })
             
 			for key in keys {
-				// `objectForKey:` deletes the object if it is expired
-				self.objectForKey(key)
+				// deletes the object if it is expired
+				_ = self.objectForKey(key, removeIfExpired: true)
 			}
 		}
 	}
@@ -262,7 +264,7 @@ public class Cache<T: NSCoding> {
 	
 	// MARK: Subscripting
 	
-	public subscript(key: String) -> T? {
+	open subscript(key: String) -> T? {
 		get {
 			return objectForKey(key)
 		}
@@ -278,29 +280,29 @@ public class Cache<T: NSCoding> {
 	
 	// MARK: Private Helper
 	
-	private func pathForKey(key: String) -> String {
+	fileprivate func pathForKey(_ key: String) -> String {
 		let k = sanitizedKey(key)
-		return NSString(string: NSString(string:cacheDirectory).stringByAppendingPathComponent(k)).stringByAppendingPathExtension("cache")!
+		return NSString(string: NSString(string:cacheDirectory).appendingPathComponent(k)).appendingPathExtension("cache")!
 	}
 	
-	private func sanitizedKey(key: String) -> String {
-		let regex = try! NSRegularExpression(pattern: "[^a-zA-Z0-9_]+", options: NSRegularExpressionOptions())
+	fileprivate func sanitizedKey(_ key: String) -> String {
+		let regex = try! NSRegularExpression(pattern: "[^a-zA-Z0-9_]+", options: NSRegularExpression.Options())
 		let range = NSRange(location: 0, length: key.characters.count)
-		return regex.stringByReplacingMatchesInString(key, options: NSMatchingOptions(), range: range, withTemplate: "-")
+		return regex.stringByReplacingMatches(in: key, options: NSRegularExpression.MatchingOptions(), range: range, withTemplate: "-")
 	}
 
-	private func expiryDateForCacheExpiry(expiry: CacheExpiry) -> NSDate {
+	fileprivate func expiryDateForCacheExpiry(_ expiry: CacheExpiry) -> Date {
 		switch expiry {
-		case .Never:
-			return NSDate.distantFuture() 
-		case .Seconds(let seconds):
-			return NSDate().dateByAddingTimeInterval(seconds)
-		case .Date(let date):
+		case .never:
+			return Date.distantFuture 
+		case .seconds(let seconds):
+			return Date().addingTimeInterval(seconds)
+		case .date(let date):
 			return date
 		}
 	}
     
-    private func map(source:[String], _ block:((String) -> String)) -> [String] {
+    fileprivate func map(_ source:[String], _ block:((String) -> String)) -> [String] {
         var res = [String]()
         for object in source {
             res.append(block(object))

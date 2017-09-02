@@ -16,7 +16,7 @@ import Foundation
  */
 class CacheObject : NSObject, NSCoding {
 	let value: AnyObject
-	let expiryDate: NSDate
+	let expiryDate: Date
 	
     /**
      * Designated initializer.
@@ -24,7 +24,7 @@ class CacheObject : NSObject, NSCoding {
      * - parameter value:      An object that should be cached
      * - parameter expiryDate: The expiry date of the given value
      */
-	init(value: AnyObject, expiryDate: NSDate) {
+	init(value: AnyObject, expiryDate: Date) {
 		self.value = value
 		self.expiryDate = expiryDate
 	}
@@ -42,19 +42,19 @@ class CacheObject : NSObject, NSCoding {
 	/// NSCoding
 
 	required init?(coder aDecoder: NSCoder) {
-		value = aDecoder.decodeObjectForKey("value") as AnyObject!
-		expiryDate = aDecoder.decodeObjectForKey("expiryDate") as! NSDate
+		value = aDecoder.decodeObject(forKey: "value") as AnyObject!
+		expiryDate = aDecoder.decodeObject(forKey: "expiryDate") as! Date
 
 		super.init()
 	}
 	
-	func encodeWithCoder(aCoder: NSCoder) {
-		aCoder.encodeObject(value, forKey: "value")
-		aCoder.encodeObject(expiryDate, forKey: "expiryDate")
+	func encode(with aCoder: NSCoder) {
+		aCoder.encode(value, forKey: "value")
+		aCoder.encode(expiryDate, forKey: "expiryDate")
 	}
 }
 
-extension NSDate {
+extension Date {
     var isInThePast: Bool {
         return self.timeIntervalSinceNow < 0
     }
