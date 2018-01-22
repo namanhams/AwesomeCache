@@ -10,5 +10,5 @@ Pod::Spec.new do |s|
   s.ios.deployment_target = "9.0"
   s.source                = { :git => "https://github.com/namanhams/AwesomeCache.git", :tag => s.version }
   s.requires_arc          = true
-  s.source_files          = "Cache.swift", "CacheObject.swift""
+  s.source_files          = "Cache.swift", "CacheObject.swift"
 end
