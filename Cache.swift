@@ -179,7 +179,7 @@ open class Cache<T: NSCoding> {
 	 *  @param object	The object that should be cached
 	 *  @param forKey	A key that represents this object in the cache
 	 */
-	open func setObject(_ object: T, forKey key: String, expires: CacheExpiry) {
+	open func setObject(_ object: T, forKey key: String, expires: CacheExpiry, completion: (() -> Void)? = nil) {
 		let expiryDate = expiryDateForCacheExpiry(expires)
 		let cacheObject = CacheObject(value: object, expiryDate: expiryDate)
 		
@@ -190,6 +190,10 @@ open class Cache<T: NSCoding> {
 		diskWriteQueue.async {
 			let path = self.pathForKey(key)
 			NSKeyedArchiver.archiveRootObject(cacheObject, toFile: path)
+            
+            DispatchQueue.main.async {
+                completion?()
+            }
 		}
 	}
 	
@@ -201,7 +205,7 @@ open class Cache<T: NSCoding> {
 	 *  
 	 *  @param key	The key of the object that should be removed
 	 */
-	open func removeObjectForKey(_ key: String) {
+	open func removeObjectForKey(_ key: String, completion: (() -> Void)? = nil) {
 		cache?.removeObject(forKey: key as AnyObject)
 		
 		diskWriteQueue.async {
@@ -210,6 +214,10 @@ open class Cache<T: NSCoding> {
 				try self.fileManager.removeItem(atPath: path)
 			} catch _ {
 			}
+            
+            DispatchQueue.main.async {
+                completion?()
+            }
 		}
 	}
 	
@@ -247,7 +255,7 @@ open class Cache<T: NSCoding> {
 	/**
 	 *  Removes all expired objects from the cache.
 	 */
-	open func removeExpiredObjects() {
+	open func removeExpiredObjects(_ completion: (() -> Void)? = nil) {
 		diskWriteQueue.async {
 			let paths = (try! self.fileManager.contentsOfDirectory(atPath: self.cacheDirectory))
             let keys = self.map(paths, { (obj) -> String in
@@ -258,6 +266,10 @@ open class Cache<T: NSCoding> {
 				// deletes the object if it is expired
 				_ = self.objectForKey(key, removeIfExpired: true)
 			}
+            
+            DispatchQueue.main.async {
+                completion?()
+            }
 		}
 	}
 	
