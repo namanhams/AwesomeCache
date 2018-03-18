@@ -83,42 +83,7 @@ open class Cache<T: NSCoding> {
 		self.init(name: name, directory: nil)
 	}
 	
-	
-	// MARK: Awesome caching
-	
-	/**
-	 *  Returns a cached object immediately or evaluates a cacheBlock. The cacheBlock will not be re-evaluated until the object is expired or manually deleted.
-	 *
-	 *  If the cache already contains an object, the completion block is called with the cached object immediately.
-	 *
-	 *	If no object is found or the cached object is already expired, the `cacheBlock` is called.
-	 *	You might perform any tasks (e.g. network calls) within this block. Upon completion of these tasks, make sure to call the `success` or `failure` block that is passed to the `cacheBlock`.
-	 *  The completion block is invoked as soon as the cacheBlock is finished and the object is cached.
-	 *
-	 *  @param key			The key to lookup the cached object
-	 *  @param cacheBlock	This block gets called if there is no cached object or the cached object is already expired.
-	 *						The supplied success or failure blocks must be called upon completion.
-	 *						If the error block is called, the object is not cached and the completion block is invoked with this error.
-	 *  @param completion	Called as soon as a cached object is available to use. The second parameter is true if the object was already cached.
-	 */
-	open func setObjectForKey(_ key: String, cacheBlock: ((T, CacheExpiry) -> (), (NSError?) -> ()) -> (), completion: @escaping (T?, Bool, NSError?) -> ()) {
-		if let object = objectForKey(key) {
-			completion(object, true, nil)
-		} else {
-			let successBlock: (T, CacheExpiry) -> () = { (obj, expires) in
-				self.setObject(obj, forKey: key, expires: expires)
-				completion(obj, false, nil)
-			}
-			
-			let failureBlock: (NSError?) -> () = { (error) in
-				completion(nil, false, error)
-			}
-			
-			cacheBlock(successBlock, failureBlock)
-		}
-	}
-	
-	
+		
 	// MARK: Get object
 	
 	/**
@@ -168,8 +133,18 @@ open class Cache<T: NSCoding> {
 	 *  @param object	The object that should be cached
 	 *  @param forKey	A key that represents this object in the cache
 	 */
-	open func setObject(_ object: T, forKey key: String) {
-		self.setObject(object, forKey: key, expires: .never)
+	open func setObjectSynchronously(_ object: T, forKey key: String, expires: CacheExpiry = .never) {
+        let expiryDate = expiryDateForCacheExpiry(expires)
+        let cacheObject = CacheObject(value: object, expiryDate: expiryDate)
+        
+        // Set object in local cache
+        cache?.setObject(cacheObject, forKey: key as AnyObject)
+        
+        // Write object to disk (asyncronously)
+        diskWriteQueue.sync {
+            let path = self.pathForKey(key)
+            NSKeyedArchiver.archiveRootObject(cacheObject, toFile: path)
+        }
 	}
 	
 	/**
@@ -179,98 +154,104 @@ open class Cache<T: NSCoding> {
 	 *  @param object	The object that should be cached
 	 *  @param forKey	A key that represents this object in the cache
 	 */
-	open func setObject(_ object: T, forKey key: String, expires: CacheExpiry, completion: (() -> Void)? = nil) {
-		let expiryDate = expiryDateForCacheExpiry(expires)
-		let cacheObject = CacheObject(value: object, expiryDate: expiryDate)
-		
-		// Set object in local cache
-		cache?.setObject(cacheObject, forKey: key as AnyObject)
-		
-		// Write object to disk (asyncronously)
-		diskWriteQueue.async {
-			let path = self.pathForKey(key)
-			NSKeyedArchiver.archiveRootObject(cacheObject, toFile: path)
-            
+	open func setObject(_ object: T, forKey key: String, expires: CacheExpiry = .never, completion: (() -> Void)? = nil) {
+        DispatchQueue.global().async {
+            self.setObjectSynchronously(object, forKey: key, expires: expires)
             DispatchQueue.main.async {
                 completion?()
             }
-		}
+        }
 	}
 	
 	
 	// MARK: Remove objects
-	
+    open func removeObjectForKeySynchronously(_ key: String) {
+        cache?.removeObject(forKey: key as AnyObject)
+        
+        diskWriteQueue.sync {
+            let path = self.pathForKey(key)
+            do {
+                try self.fileManager.removeItem(atPath: path)
+            } catch _ {
+            }
+        }
+    }
+    
+    
 	/** 
 	 *  Removes an object from the cache.
 	 *  
 	 *  @param key	The key of the object that should be removed
 	 */
 	open func removeObjectForKey(_ key: String, completion: (() -> Void)? = nil) {
-		cache?.removeObject(forKey: key as AnyObject)
-		
-		diskWriteQueue.async {
-			let path = self.pathForKey(key)
-			do {
-				try self.fileManager.removeItem(atPath: path)
-			} catch _ {
-			}
-            
+        DispatchQueue.global().async {
+            self.removeObjectForKeySynchronously(key)
             DispatchQueue.main.async {
                 completion?()
             }
-		}
+        }
 	}
 	
+    open func removeAllObjectsSynchronously() {
+        cache?.removeAllObjects()
+        
+        diskWriteQueue.sync {
+            let paths = (try! self.fileManager.contentsOfDirectory(atPath: self.cacheDirectory))
+            let keys = self.map(paths, { (obj) -> String in
+                return String(NSString(string:obj).deletingPathExtension)
+            })
+            
+            for key in keys {
+                let path = self.pathForKey(key)
+                do {
+                    try self.fileManager.removeItem(atPath: path)
+                } catch _ {
+                }
+            }
+        }
+    }
+    
 	/**
 	 *  Removes all objects from the cache.
 	 *
 	 *  @param completion	Called as soon as all cached objects are removed from disk.
 	 */
 	open func removeAllObjects(_ completion: (() -> Void)? = nil) {
-		cache?.removeAllObjects()
-		
-		diskWriteQueue.async {
-			let paths = (try! self.fileManager.contentsOfDirectory(atPath: self.cacheDirectory)) 
-            let keys = self.map(paths, { (obj) -> String in
-                return String(NSString(string:obj).deletingPathExtension)
-            })
-			
-			for key in keys {
-				let path = self.pathForKey(key)
-				do {
-					try self.fileManager.removeItem(atPath: path)
-				} catch _ {
-				}
-			}
-
-			DispatchQueue.main.async {
-				completion?()
-			}
-		}
+        DispatchQueue.global().async {
+            self.removeAllObjectsSynchronously()
+            DispatchQueue.main.async {
+                completion?()
+            }
+        }
 	}
 	
 	
 	// MARK: Remove Expired Objects
 	
-	/**
-	 *  Removes all expired objects from the cache.
-	 */
-	open func removeExpiredObjects(_ completion: (() -> Void)? = nil) {
-		diskWriteQueue.async {
-			let paths = (try! self.fileManager.contentsOfDirectory(atPath: self.cacheDirectory))
+    open func removeExpiredObjectsSynchronously() {
+        diskWriteQueue.sync {
+            let paths = (try! self.fileManager.contentsOfDirectory(atPath: self.cacheDirectory))
             let keys = self.map(paths, { (obj) -> String in
                 return String(NSString(string:obj).deletingPathExtension)
             })
             
-			for key in keys {
-				// deletes the object if it is expired
-				_ = self.objectForKey(key, removeIfExpired: true)
-			}
-            
+            for key in keys {
+                // deletes the object if it is expired
+                _ = self.objectForKey(key, removeIfExpired: true)
+            }
+        }
+    }
+    
+	/**
+	 *  Removes all expired objects from the cache.
+	 */
+	open func removeExpiredObjects(_ completion: (() -> Void)? = nil) {
+        DispatchQueue.global().async {
+            self.removeExpiredObjectsSynchronously()
             DispatchQueue.main.async {
                 completion?()
             }
-		}
+        }
 	}
 	
 	
