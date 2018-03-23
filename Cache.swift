@@ -104,7 +104,12 @@ open class Cache<T: NSCoding> {
 			diskReadQueue.sync {
 				let path = self.pathForKey(key)
 				if self.fileManager.fileExists(atPath: path) {
-					possibleObject = NSKeyedUnarchiver.unarchiveObject(withFile: path) as? CacheObject
+                    if let data = NSData(contentsOfFile: path) {
+                        do {
+                            possibleObject = try NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data) as? CacheObject
+                        }
+                        catch {}
+                    }
 				}
 			}
 		}
