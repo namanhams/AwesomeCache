@@ -104,12 +104,12 @@ open class Cache<T: NSCoding> {
 			diskReadQueue.sync {
 				let path = self.pathForKey(key)
 				if self.fileManager.fileExists(atPath: path) {
-                    if let data = NSData(contentsOfFile: path) {
-                        do {
-                            possibleObject = try NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data) as? CacheObject
-                        }
-                        catch {}
+                    let url = URL(fileURLWithPath: path)
+                    do {
+                        let data = try Data(contentsOf: url)
+                        possibleObject = try NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data) as? CacheObject
                     }
+                    catch {}
 				}
 			}
 		}
